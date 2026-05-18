@@ -48,7 +48,7 @@ def einstein_coeffs_B(
         raise ValueError("nu_Hz must be positive")
 
     B_ul_SI = SPEED_OF_LIGHT**2 * A_ul_s_1 / (
-        2.0 * PLANCK_CONSTANT * nu_Hz**3
+        2.0 * PLANCK_CONSTANT * nu_Hz**3      # unit m2 J-1 S-1
     )
     B_lu_SI = (g_u / g_l) * B_ul_SI
 

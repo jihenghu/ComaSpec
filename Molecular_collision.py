@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from Constants import ATOMIC_MASS_UNIT, BOLTZMANN_CONSTANT
+from Constants import ATOMIC_MASS_UNIT, BOLTZMANN_CONSTANT, PLANCK_CONSTANT
 
 
 def _thermal_velocity(
@@ -43,6 +43,42 @@ def _thermal_velocity(
         return float(velocity_m_s)
 
     return velocity_m_s
+
+
+# implement the sigma temperature dependence in the future if needed, e.g., sigma_ul_m2 = alpa * temperature_K^beta
+def ww_sigma_ul_m2(
+    temperature_K: float | np.ndarray,
+    *,
+    alpha: float = 2.924e-18, # sigma_ul_m2 at 100 K for the 110 -> 101 de-excitation  Buffa+, 2000
+    beta: float = -0.6,
+) -> float | np.ndarray:
+    """Return the collision cross section for a transition in m^2.
+
+    Parameters
+    ----------
+    temperature_K
+        Gas temperature in K used to compute the thermal relative velocity.
+    alpha
+        Pre-factor for the collision cross section in m^2. The default value is
+        ``2.924e-18 m^2`` for the ``110 -> 101`` de-excitation.
+    beta
+        Power-law index for the temperature dependence of the collision cross
+        section. The default value is ``-0.2``, i.e., temperature dependence.
+    """
+
+    temperature_K = np.asarray(temperature_K, dtype=np.float64)
+
+    if np.any(temperature_K < 0.0):
+        raise ValueError("temperature_K must be non-negative")
+    if alpha < 0.0:
+        raise ValueError("alpha must be non-negative")
+
+    sigma_ul_m2 = alpha * (temperature_K/100.0)**beta
+
+    if sigma_ul_m2.ndim == 0:
+        return float(sigma_ul_m2)
+
+    return sigma_ul_m2
 
 
 def molecular_collision_rate(
@@ -94,3 +130,36 @@ def molecular_collision_rate(
         return float(Cm_ul_s_1)
 
     return Cm_ul_s_1
+
+
+def detailed_balance_excitation_rate(
+    Cm_ul_s_1: float | np.ndarray,
+    temperature_K: float | np.ndarray,
+    *,
+    nu_Hz: float = 556.936e9,
+    g_u: float = 9.0,
+    g_l: float = 9.0,
+) -> float | np.ndarray:
+    """Compute ``l -> u`` collisional excitation from ``u -> l`` detailed balance."""
+
+    Cm_ul_s_1 = np.asarray(Cm_ul_s_1, dtype=np.float64)
+    temperature_K = np.asarray(temperature_K, dtype=np.float64)
+
+    if np.any(Cm_ul_s_1 < 0.0):
+        raise ValueError("Cm_ul_s_1 must be non-negative")
+    if np.any(temperature_K <= 0.0):
+        raise ValueError("temperature_K must be positive")
+    if nu_Hz <= 0.0:
+        raise ValueError("nu_Hz must be positive")
+    if g_u <= 0.0 or g_l <= 0.0:
+        raise ValueError("g_u and g_l must be positive")
+
+    boltzmann_factor = np.exp(
+        -(PLANCK_CONSTANT * float(nu_Hz)) / (BOLTZMANN_CONSTANT * temperature_K)
+    )
+    Cm_lu_s_1 = Cm_ul_s_1 * (float(g_u) / float(g_l)) * boltzmann_factor
+
+    if Cm_lu_s_1.ndim == 0:
+        return float(Cm_lu_s_1)
+
+    return Cm_lu_s_1

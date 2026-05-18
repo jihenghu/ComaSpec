@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from Index_map import IDEN, ILEV0, ITEMP, IVEL
+from Index_map import IDEN, IELE, ILEV0, ITEL, ITEMP, IVEL
 
 
 class ComaGrid:
@@ -18,6 +18,10 @@ class ComaGrid:
         Total number density profile with shape ``(ngrid,)``.
     velocity
         Velocity profile with shape ``(ngrid,)``.
+    nelec
+        Electron number density profile with shape ``(ngrid,)``.
+    telec
+        Electron temperature profile with shape ``(ngrid,)``.
     fractions
         Excited-state fractional populations with shape ``(ngrid, nlevels - 1)``.
         Level 0 is treated as the ground state and is filled by normalization:
@@ -29,6 +33,8 @@ class ComaGrid:
         temperature: np.ndarray,
         total_number_density: np.ndarray,
         velocity: np.ndarray,
+        nelec: np.ndarray,
+        telec: np.ndarray,
         fractions: np.ndarray,
     ) -> None:
         temperature = self._as_profile_array(temperature, "temperature")
@@ -36,21 +42,31 @@ class ComaGrid:
             total_number_density, "total_number_density"
         )
         velocity = self._as_profile_array(velocity, "velocity")
+        nelec = self._as_profile_array(nelec, "nelec")
+        telec = self._as_profile_array(telec, "telec")
         fractions = self._as_fraction_array(fractions)
 
         ngrid = temperature.shape[0]
         self._validate_same_length(total_number_density, ngrid, "total_number_density")
         self._validate_same_length(velocity, ngrid, "velocity")
+        self._validate_same_length(nelec, ngrid, "nelec")
+        self._validate_same_length(telec, ngrid, "telec")
         self._validate_same_length(fractions, ngrid, "fractions")
 
         self.ngrid = ngrid
-        self.nprops = 3
+        self.nprops = 5
         self.nlevels = fractions.shape[1] + 1
+
+        # Radial grid (cell faces xf and centers xc)
+        self.xf = np.zeros(self.ngrid + 1, dtype=np.float64)
+        self.xc = np.zeros(self.ngrid, dtype=np.float64)
 
         self.props = np.empty((self.nprops, self.ngrid), dtype=np.float64, order="C")
         self.props[ITEMP, :] = temperature
         self.props[IDEN, :] = total_number_density
         self.props[IVEL, :] = velocity
+        self.props[IELE, :] = nelec
+        self.props[ITEL, :] = telec
 
         self.density = np.empty(
             (self.ngrid, self.nlevels), dtype=np.float64, order="C"
@@ -68,6 +84,14 @@ class ComaGrid:
     @property
     def velocity(self) -> np.ndarray:
         return self.props[IVEL]
+
+    @property
+    def nelec(self) -> np.ndarray:
+        return self.props[IELE]
+
+    @property
+    def telec(self) -> np.ndarray:
+        return self.props[ITEL]
 
     def update_density_from_fractions(self, fractions: np.ndarray) -> None:
         """Update ``density`` from excited-state fractions.
