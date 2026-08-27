@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import numpy as np
 import torch
 
@@ -138,14 +139,15 @@ def solve_disort_layers(
     g_u: float = 9.0,
     g_l: float = 9.0,
     absorber_mass_kg: float = 18.01528 * constants.ATOMIC_MASS_UNIT,
+    line_profile_type: str = "thermal Gaussian",
+    width_v_fwhm_m_s: float | np.ndarray | None = None,
+    path_length_m: float | np.ndarray | None = None,
     nstreams: int = 16,
     flags: str = DEFAULT_DISORT_FLAGS,
     surface_albedo: float = DEFAULT_SURFACE_ALBEDO,
     background_temperature_K: float = DEFAULT_BACKGROUND_TEMPERATURE_K,
     temis: float = DEFAULT_TOP_EMISSIVITY,
     fisot: float = DEFAULT_TOP_ISOTROPIC_ILLUMINATION,
-    apply_spherical_dilution: bool = False,
-    dilution_reference_radius_m: float | None = None,
 ) -> dict[str, np.ndarray | float | str]:
     """Solve the non-LTE transfer problem with PYDISORT.
 
@@ -162,22 +164,34 @@ def solve_disort_layers(
         raise ValueError("temis must be non-negative")
     if fisot < 0.0:
         raise ValueError("fisot must be non-negative")
-    if dilution_reference_radius_m is not None and dilution_reference_radius_m <= 0.0:
-        raise ValueError("dilution_reference_radius_m must be positive")
 
-    ds_m = layer_thicknesses(coma)
-    tau_profile = nonlte_tau(
-        coma,
-        path_length_m=ds_m,
-        lower_level=lower_level,
-        upper_level=upper_level,
-        nu_Hz=nu_Hz,
-        A_ul_s_1=A_ul_s_1,
-        g_u=g_u,
-        g_l=g_l,
-        nu0_Hz=nu_Hz,
-        absorber_mass_kg=absorber_mass_kg,
-    )
+    if path_length_m is None:
+        ds_m = layer_thicknesses(coma)
+    else:
+        ds_m = np.asarray(path_length_m, dtype=np.float64)
+        if ds_m.ndim == 0:
+            ds_m = np.full(coma.ngrid, float(ds_m), dtype=np.float64)
+        elif ds_m.shape != (coma.ngrid,):
+            raise ValueError(f"path_length_m must be scalar or have shape ({coma.ngrid},)")
+        if np.any(ds_m < 0.0):
+            raise ValueError("path_length_m must be non-negative")
+    tau_kwargs = {
+        "path_length_m": ds_m,
+        "lower_level": lower_level,
+        "upper_level": upper_level,
+        "nu_Hz": nu_Hz,
+        "A_ul_s_1": A_ul_s_1,
+        "g_u": g_u,
+        "g_l": g_l,
+        "nu0_Hz": nu_Hz,
+        "absorber_mass_kg": absorber_mass_kg,
+    }
+    tau_parameters = inspect.signature(nonlte_tau).parameters
+    if "line_profile_type" in tau_parameters:
+        tau_kwargs["line_profile_type"] = line_profile_type
+    if "width_v_fwhm_m_s" in tau_parameters:
+        tau_kwargs["width_v_fwhm_m_s"] = width_v_fwhm_m_s
+    tau_profile = nonlte_tau(coma, **tau_kwargs)
     tex_profile = nonlte_excitation_temperature(
         coma,
         lower_level=lower_level,
@@ -225,30 +239,12 @@ def solve_disort_layers(
     )
 
     intensity_levels = np.asarray(solver.gather_rad().detach().cpu().numpy(), dtype=np.float64)
+    print("....intensity_levels...", intensity_levels.shape)
     intensity_levels = intensity_levels[0, 0, 0, :, :]
     intensity_layers = 0.5 * (intensity_levels[:-1, :] + intensity_levels[1:, :])
 
-    # j_v = 0.5 * np.sum(intensity_layers * weights[np.newaxis, :], axis=1)
-    stream_average = np.mean(intensity_layers, axis=1)
-
-    j_nu_hz_undiluted = stream_average / (constants.SPEED_OF_LIGHT * 100.0)
-    spherical_dilution = np.ones_like(j_nu_hz_undiluted)
-    if apply_spherical_dilution:
-        r_m = np.asarray(coma.xc, dtype=np.float64)
-        if r_m.shape != (coma.ngrid,):
-            raise ValueError(
-                "coma.xc must have shape (coma.ngrid,) to apply spherical dilution"
-            )
-        if np.any(r_m <= 0.0):
-            raise ValueError("coma.xc must be positive to apply spherical dilution")
-
-        if dilution_reference_radius_m is None:
-            dilution_reference_radius_m = float(np.min(r_m))
-
-        spherical_dilution = (float(dilution_reference_radius_m) / r_m) ** 2
-        spherical_dilution = np.minimum(spherical_dilution, 1.0)
-
-    j_nu_hz = j_nu_hz_undiluted * spherical_dilution
+    stream_average = 0.5 * np.sum(intensity_layers * weights[np.newaxis, :], axis=1)
+    j_nu_hz = stream_average / (constants.SPEED_OF_LIGHT * 100.0)
 
     # rad = solver.gather_rad() #/ c_cm_s
     # weights = np.ones_like(mu) / len(mu)
@@ -272,7 +268,5 @@ def solve_disort_layers(
         # "intensity_streams": np.array(intensity_layers, copy=True),
         # "J_v": np.array(j_v, copy=True),
         # "J_v_stream_average": np.array(stream_average, copy=True),
-        "J_nu_undiluted": np.array(j_nu_hz_undiluted, copy=True),
-        "spherical_dilution": np.array(spherical_dilution, copy=True),
         "J_v_stream_average": np.array(j_nu_hz, copy=True),
     }
